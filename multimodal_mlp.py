@@ -2,8 +2,38 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-import argparse
-import json
+import torchmetrics
+
+
+class WeightedBCELoss(nn.Module):
+    def __init__(self, pos_weight=1.0, unl_weight=1.0):
+        """
+        pos_weight: weight for positive samples (label=1)
+        unl_weight: weight for unlabeled samples (label=0)
+        """
+        super().__init__()
+        self.pos_weight = pos_weight
+        self.unl_weight = unl_weight
+
+    def forward(self, logits, labels):
+        """
+        logits: (B,)
+        labels: (B,) with 1 (positive) or 0 (unlabeled)
+        """
+
+        # element-wise BCE (no reduction yet)
+        loss = F.binary_cross_entropy_with_logits(
+            logits, labels.float(), reduction='none'
+        )
+
+        # apply weights
+        weights = torch.where(labels == 1,
+                              torch.full_like(labels, self.pos_weight, dtype=torch.float32),
+                              torch.full_like(labels, self.unl_weight, dtype=torch.float32))
+
+        weighted_loss = loss * weights
+
+        return weighted_loss.mean()
 
 
 class nnPULoss(nn.Module):
@@ -60,7 +90,11 @@ class MultiModalPUPredictor(pl.LightningModule):
         hidden_ppi=64,
         fusion_dim=64,
         lr=1e-3,
+        weight_decay=1e-4,
         prior=0.1,
+        loss_type='nnpu',
+        pos_weight=1.0,
+        unl_weight=1.0,
         l1_lambda=0.0,
         use_ppi=True,
         fusion_type='concat', # 'concat', 'attention', 'matmul'
@@ -72,6 +106,10 @@ class MultiModalPUPredictor(pl.LightningModule):
         self.use_ppi = use_ppi
         self.fusion_type = fusion_type
         self.ppi_net_type = ppi_net_type
+
+        # Metrics
+        self.val_auroc = torchmetrics.classification.BinaryAUROC()
+        self.val_pr_auc = torchmetrics.classification.BinaryAveragePrecision()
 
         # ------------------
         # Phenotype branch
@@ -150,8 +188,16 @@ class MultiModalPUPredictor(pl.LightningModule):
                 nn.Linear(fusion_dim, 1)
             )
 
-        self.criterion = nnPULoss(prior=prior)
+        self.loss_type = loss_type
+        if self.loss_type == 'nnpu':
+            self.criterion = nnPULoss(prior=prior)
+        elif self.loss_type == 'wbce':
+            self.criterion = WeightedBCELoss(pos_weight=pos_weight, unl_weight=unl_weight)
+        else:
+            raise ValueError(f"Unknown loss type: {self.loss_type}")
+
         self.lr = lr
+        self.weight_decay = weight_decay
         self.l1_lambda = l1_lambda
 
     def forward(self, pheno, ppi=None, return_embeddings=False):
@@ -220,7 +266,7 @@ class MultiModalPUPredictor(pl.LightningModule):
                 l1_loss += embeddings["ppi_emb"].abs().mean()
             loss = loss + self.l1_lambda * l1_loss
 
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -233,68 +279,26 @@ class MultiModalPUPredictor(pl.LightningModule):
 
         probs = torch.sigmoid(logits)
 
-        self.log("val_loss", loss)
-        self.log("val_mean_prob", probs.mean())
+        self.val_auroc.update(probs, labels.long())
+        self.val_pr_auc.update(probs, labels.long())
+
+        self.log("val_loss", loss, on_epoch=True, prog_bar=True)
+        self.log("val_mean_prob", probs.mean(), on_epoch=True)
 
         return loss
 
+    def on_validation_epoch_end(self):
+        # Compute epoch-level metrics
+        auroc = self.val_auroc.compute()
+        pr_auc = self.val_pr_auc.compute()
+
+        # Log to PyTorch Lightning (and thereby WandB)
+        self.log("val_auroc", auroc, prog_bar=True)
+        self.log("val_pr_auc", pr_auc, prog_bar=True)
+
+        # Reset metric states for the next epoch
+        self.val_auroc.reset()
+        self.val_pr_auc.reset()
+
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Multimodal MLP execution script with flexible configurations")
-    parser.add_argument('--config', type=str, help='Path to an optional JSON configuration file')
-    
-    # Core architectural arguments
-    parser.add_argument('--use_ppi', type=lambda x: str(x).lower() == 'true', default=True, help='Use both modalities. If False, only pheno is used (ablation study).')
-    parser.add_argument('--fusion_type', type=str, choices=['concat', 'matmul', 'attention'], default='concat', help='Fusion technique for the two modalities')
-    parser.add_argument('--ppi_net_type', type=str, choices=['mlp', 'attention'], default='mlp', help='Architecture type for the PPI branch')
-    
-    # Dimensionality and hyperparameters
-    parser.add_argument('--pheno_dim', type=int, default=3)
-    parser.add_argument('--ppi_dim', type=int, default=440)
-    parser.add_argument('--hidden_pheno', type=int, default=16)
-    parser.add_argument('--hidden_ppi', type=int, default=64)
-    parser.add_argument('--fusion_dim', type=int, default=64)
-    parser.add_argument('--lr', type=float, default=1e-3)
-
-    # Note: parse_known_args used to allow easy usage in PyTorch Lightning without breaking on unknown flags
-    args, unknown = parser.parse_known_args()
-
-    # Load config from JSON if provided, overriding defaults
-    config = vars(args)
-    if args.config:
-        try:
-            with open(args.config, 'r') as f:
-                json_config = json.load(f)
-                config.update(json_config)
-        except Exception as e:
-            print(f"Warning - failed to load config file {args.config}: {e}")
-
-    print("\n" + "="*50)
-    print("Running with configuration:")
-    for k, v in config.items():
-        print(f"  {k}: {v}")
-    print("="*50 + "\n")
-
-    # Initialize model using the merged configuration
-    model = MultiModalPUPredictor(
-        pheno_dim=config.get('pheno_dim', 3),
-        ppi_dim=config.get('ppi_dim', 440),
-        hidden_pheno=config.get('hidden_pheno', 16),
-        hidden_ppi=config.get('hidden_ppi', 64),
-        fusion_dim=config.get('fusion_dim', 64),
-        lr=config.get('lr', 1e-3),
-        prior=config.get('prior', 0.1),
-        l1_lambda=config.get('l1_lambda', 0.0),
-        use_ppi=config.get('use_ppi', True),
-        fusion_type=config.get('fusion_type', 'concat'),
-        ppi_net_type=config.get('ppi_net_type', 'mlp')
-    )
-
-    print("Model initialized successfully!")
-
-
-if __name__ == '__main__':
-    main()
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
