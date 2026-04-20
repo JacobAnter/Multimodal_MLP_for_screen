@@ -1,6 +1,8 @@
 import argparse
 import ast
 import json
+import os
+import re
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -93,7 +95,16 @@ def main():
     ppi_encoder_str = config.get('ppi_net_type') if config.get('use_ppi') else "None"
     ppi_vec_str = config.get('ppi_vec_type', 'probs')
     
-    base_run_name = f"multimodal_PU_learning_PPI_features_{use_ppi_str}_type_{ppi_vec_str}_feature_fusion_{config.get('fusion_type')}_PPI_encoder_{ppi_encoder_str}"
+    train_data_path = config.get('train_data') or ""
+    train_data_name = os.path.basename(train_data_path)
+    pu_ratio_match = re.search(r'(pu_ratio_1_[^.]+)', train_data_name)
+    pu_ratio_str = pu_ratio_match.group(1) if pu_ratio_match else "pu_ratio_unknown"
+
+    hidden_pheno = config.get('hidden_pheno')
+    hidden_ppi = config.get('hidden_ppi')
+    fusion_dim = config.get('fusion_dim')
+    
+    base_run_name = f"multimodal_PU_learning_PPI_features_{use_ppi_str}_type_{ppi_vec_str}_feature_fusion_{config.get('fusion_type')}_PPI_encoder_{ppi_encoder_str}_hidden_pheno_{hidden_pheno}_hidden_ppi_{hidden_ppi}_fusion_dim_{fusion_dim}_{pu_ratio_str}"
     
     if config.get('loss_type') == 'wbce':
         inferred_run_name = f"{base_run_name}_loss_wbce_pos_{config.get('pos_weight')}_unl_{config.get('unl_weight')}"
