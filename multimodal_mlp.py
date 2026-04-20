@@ -111,6 +111,9 @@ class MultiModalPUPredictor(pl.LightningModule):
         self.val_auroc = torchmetrics.classification.BinaryAUROC()
         self.val_pr_auc = torchmetrics.classification.BinaryAveragePrecision()
 
+        self.val_preds = []
+        self.val_labels = []
+
         # ------------------
         # Phenotype branch
         # ------------------
@@ -275,9 +278,12 @@ class MultiModalPUPredictor(pl.LightningModule):
         labels = batch["label"].float()
 
         logits = self(pheno, ppi)
-        loss = self.criterion(logits, labels)
-
         probs = torch.sigmoid(logits)
+
+        self.val_preds.append(probs.detach().cpu())
+        self.val_labels.append(labels.detach().cpu())
+
+        loss = self.criterion(logits, labels)
 
         self.val_auroc.update(probs, labels.long())
         self.val_pr_auc.update(probs, labels.long())
@@ -299,6 +305,48 @@ class MultiModalPUPredictor(pl.LightningModule):
         # Reset metric states for the next epoch
         self.val_auroc.reset()
         self.val_pr_auc.reset()
+
+        # -------------------------
+        # Top-k metrics
+        # -------------------------
+        if len(self.val_preds) == 0:
+            return
+
+        preds = torch.cat(self.val_preds)
+        labels = torch.cat(self.val_labels)
+        
+        # Clear buffers early
+        self.val_preds.clear()
+        self.val_labels.clear()
+
+        num_samples = len(labels)
+        if num_samples == 0:
+            return
+
+        # Sort by predicted probability (descending)
+        sorted_idx = torch.argsort(preds, descending=True)
+        sorted_labels = labels[sorted_idx]
+
+        actual_top100 = min(100, num_samples)
+        self.log("val_mean_top100_prob", preds[sorted_idx[:actual_top100]].mean())
+
+        total_positives = labels.sum().item()
+        baseline_rate = total_positives / num_samples
+
+        ks = [50, 100, 200]
+
+        for k in ks:
+            actual_k = min(k, num_samples)
+            topk_labels = sorted_labels[:actual_k]
+            num_pos_topk = topk_labels.sum().item()
+
+            recall_k = num_pos_topk / total_positives if total_positives > 0 else 0.0
+            precision_k = num_pos_topk / actual_k if actual_k > 0 else 0.0
+            enrichment_k = precision_k / baseline_rate if baseline_rate > 0 else 0.0
+
+            self.log(f"val_recall@{k}", recall_k, prog_bar=True)
+            self.log(f"val_precision@{k}", precision_k)
+            self.log(f"val_enrichment@{k}", enrichment_k)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
