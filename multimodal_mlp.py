@@ -38,39 +38,42 @@ class WeightedBCELoss(nn.Module):
 
 class nnPULoss(nn.Module):
     def __init__(self, prior, beta=0.0, gamma=1.0):
-        """
-        prior: class prior P(y=1)
-        beta: non-negative correction threshold (usually 0)
-        gamma: scaling for negative risk
-        """
         super().__init__()
         self.prior = prior
         self.beta = beta
         self.gamma = gamma
 
     def forward(self, logits, labels):
-        """
-        logits: (B,)
-        labels: (B,) with 1 (positive) or 0 (unlabeled)
-        """
-
         probs = torch.sigmoid(logits)
 
         pos_mask = labels == 1
         unl_mask = labels == 0
 
+        # Handle edge cases safely
         if pos_mask.sum() == 0:
-            return torch.tensor(0.0, device=logits.device)
+            return logits.sum() * 0.0
+        if unl_mask.sum() == 0:
+            return logits.sum() * 0.0
 
-        # positive risk
-        pos_loss = F.binary_cross_entropy(probs[pos_mask], torch.ones_like(probs[pos_mask]), reduction='mean')
+        # Positive risk
+        pos_loss = F.binary_cross_entropy(
+            probs[pos_mask],
+            torch.ones_like(probs[pos_mask]),
+            reduction='mean'
+        )
 
-        # negative risk (from unlabeled)
-        neg_loss = F.binary_cross_entropy(probs[unl_mask], torch.zeros_like(probs[unl_mask]), reduction='mean')
+        # Negative risk (from unlabeled)
+        neg_loss = F.binary_cross_entropy(
+            probs[unl_mask],
+            torch.zeros_like(probs[unl_mask]),
+            reduction='mean'
+        )
 
-        # correction term
+        # Correction term
         neg_risk = neg_loss - self.prior * F.binary_cross_entropy(
-            probs[pos_mask], torch.zeros_like(probs[pos_mask]), reduction='mean'
+            probs[pos_mask],
+            torch.zeros_like(probs[pos_mask]),
+            reduction='mean'
         )
 
         # nnPU correction
