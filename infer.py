@@ -94,10 +94,9 @@ def main():
 
     # Save to file
     with open(args.output_file, 'w') as f:
-        f.write("gene\tprobability\tlabel\n")
+        f.write("gene\tprobability\n")
         for gene, prob in zip(all_genes, all_probs):
-            label = 1 if prob >= 0.5 else 0
-            f.write(f"{gene}\t{prob:.6f}\t{label}\n")
+            f.write(f"{gene}\t{prob:.6f}\n")
 
     print(f"Inference complete! Saved {len(all_probs)} predictions to {args.output_file}")
 
