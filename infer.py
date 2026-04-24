@@ -3,7 +3,6 @@ import ast
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-import pytorch_lightning as pl
 
 # Ensure we can import the model
 from multimodal_mlp import MultiModalPUPredictor
