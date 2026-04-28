@@ -104,8 +104,10 @@ def main():
     hidden_ppi = config.get('hidden_ppi')
     fusion_dim = config.get('fusion_dim')
     batch_size = config.get('batch_size')
+
+    seed = config.get('seed')
     
-    base_run_name = f"multimodal_PU_learning_PPI_features_{use_ppi_str}_type_{ppi_vec_str}_feature_fusion_{config.get('fusion_type')}_PPI_encoder_{ppi_encoder_str}_hidden_pheno_{hidden_pheno}_hidden_ppi_{hidden_ppi}_fusion_dim_{fusion_dim}_batch_size_{batch_size}_{pu_ratio_str}"
+    base_run_name = f"multimodal_PU_learning_PPI_features_{use_ppi_str}_type_{ppi_vec_str}_feature_fusion_{config.get('fusion_type')}_PPI_encoder_{ppi_encoder_str}_hidden_pheno_{hidden_pheno}_hidden_ppi_{hidden_ppi}_fusion_dim_{fusion_dim}_batch_size_{batch_size}_{pu_ratio_str}_seed_{seed}"
     
     if config.get('loss_type') == 'wbce':
         inferred_run_name = f"{base_run_name}_loss_wbce_pos_{config.get('pos_weight')}_unl_{config.get('unl_weight')}"
@@ -121,8 +123,8 @@ def main():
         print(f"  {k}: {v}")
     print("="*50 + "\n")
 
-    if config.get('seed') is not None:
-        seed_everything(config['seed'], workers=True)
+    if seed is not None:
+        seed_everything(seed, workers=True)
 
     # 1. Setup Data
     if not config.get('train_data') or not config.get('val_data'):
