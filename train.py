@@ -175,13 +175,21 @@ def main():
         save_top_k=-1,  # Save all checkpoints created at the specified intervals
     )
 
+    best_checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        filename='multimodal-mlp-best-{epoch:02d}-{val_auroc:.4f}',
+        monitor='val_auroc',
+        mode='max',
+        save_top_k=1,
+    )
+
     # 5. Initialize Trainer
     trainer = pl.Trainer(
         accelerator='auto',
         devices='auto',
         logger=wandb_logger,
         max_epochs=config['max_epochs'],
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, best_checkpoint_callback],
         log_every_n_steps=10
     )
 
