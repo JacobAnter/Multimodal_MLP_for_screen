@@ -70,11 +70,11 @@ def main():
         pin_memory=True
     )
 
-    all_probs = []
-    all_genes = []
+    num_predictions = 0
 
     print("Running inference...")
-    with torch.no_grad():
+    with torch.no_grad(), open(args.output_file, 'w') as f:
+        f.write("gene\tprobability\n")
         for batch in infer_loader:
             genes = batch["gene"]
             pheno = batch["pheno"].to(device)
@@ -85,20 +85,13 @@ def main():
             
             # Predict
             logits = model(pheno, ppi)
-            probs = torch.sigmoid(logits).view(-1)
+            probs = torch.sigmoid(logits).view(-1).cpu().numpy()
             
-            all_probs.append(probs)
-            all_genes.extend(genes)
+            for gene, prob in zip(genes, probs):
+                f.write(f"{gene}\t{prob:.6f}\n")
+                num_predictions += 1
 
-    all_probs = torch.cat(all_probs, dim=0).cpu().numpy()
-
-    # Save to file
-    with open(args.output_file, 'w') as f:
-        f.write("gene\tprobability\n")
-        for gene, prob in zip(all_genes, all_probs):
-            f.write(f"{gene}\t{prob:.6f}\n")
-
-    print(f"Inference complete! Saved {len(all_probs)} predictions to {args.output_file}")
+    print(f"Inference complete! Saved {num_predictions} predictions to {args.output_file}")
 
 
 if __name__ == '__main__':
