@@ -155,13 +155,13 @@ def plot_top_k_metrics(preds_tsvs, labels_tsvs, descriptions, metric_type, outpu
 
 def evaluate_all_metrics(preds_tsvs, labels_tsvs, descriptions, output_dir):
     """
-    Computes all metrics, generates all plots, and saves summary tables.
+    Computes all metrics and generates all plots.
     
     Parameters:
     - preds_tsvs: Iterable of paths to predictions TSVs.
     - labels_tsvs: Iterable of paths to labels TSVs, or a single path.
     - descriptions: Iterable of descriptions for the models.
-    - output_dir: Directory to save the plot images and tables.
+    - output_dir: Directory to save the plot images.
     """
     os.makedirs(output_dir, exist_ok=True)
     
@@ -171,40 +171,23 @@ def evaluate_all_metrics(preds_tsvs, labels_tsvs, descriptions, output_dir):
     plot_top_k_metrics(preds_tsvs, labels_tsvs, descriptions, 'recall', os.path.join(output_dir, 'recall_at_k.png'))
     plot_top_k_metrics(preds_tsvs, labels_tsvs, descriptions, 'precision', os.path.join(output_dir, 'precision_at_k.png'))
     plot_top_k_metrics(preds_tsvs, labels_tsvs, descriptions, 'enrichment', os.path.join(output_dir, 'enrichment_at_k.png'))
-    
-    # Generate summary tables
-    labels_tsv_list = [labels_tsvs] * len(preds_tsvs) if isinstance(labels_tsvs, str) else labels_tsvs
-    for preds_tsv, labels_tsv, desc in zip(preds_tsvs, labels_tsv_list, descriptions):
-        df = _load_and_merge_data(preds_tsv, labels_tsv)
-        records = []
-        
-        for k in KS:
-            actual_k = min(k, len(df))
-            num_pos_topk, recall_k, precision_k, enrichment_k = _compute_top_k(df, actual_k)
-            records.append({
-                'k': k,
-                '#positives': num_pos_topk,
-                'recall@k': recall_k,
-                'precision@k': precision_k,
-                'enrichment@k': enrichment_k
-            })
-            
-        results_df = pd.DataFrame(records)
-        table_output_path = os.path.join(output_dir, f"{desc}_performance_top_k_comparison.tsv")
-        results_df.to_csv(table_output_path, sep='\t', index=False)
 
-def evaluate_cv_performance(preds_template, labels_tsv, k, start_idx=0):
+def evaluate_cv_performance(preds_template, labels_tsv, k, start_idx=0, output_dir=None, desc="cv"):
     """
     Evaluates AUROC and PR AUC across k cross-validation splits or random seeds.
+    It also computes summary tables for top-k metrics and saves them if output_dir is provided.
     
     Parameters:
     - preds_template: A template string for the predictions file path, e.g., "dir/preds_seed_{i}.tsv".
     - labels_tsv: Path to the labels file, or a template string if labels vary per split.
     - k: Number of splits/seeds.
     - start_idx: The starting index for `i` (usually 0 or 1).
+    - output_dir: Directory to save the summary top-k metrics table.
+    - desc: Description for the model to prefix the summary table file name.
     """
     aurocs = []
     pr_aucs = []
+    metrics_per_k = {k_val: {'#positives': [], 'recall@k': [], 'precision@k': [], 'enrichment@k': []} for k_val in KS}
     
     for i in range(start_idx, start_idx + k):
         preds_path = preds_template.format(i=i)
@@ -225,6 +208,14 @@ def evaluate_cv_performance(preds_template, labels_tsv, k, start_idx=0):
         aurocs.append(auroc)
         pr_aucs.append(pr_auc)
         
+        for k_val in KS:
+            actual_k = min(k_val, len(df))
+            num_pos_topk, recall_k, precision_k, enrichment_k = _compute_top_k(df, actual_k)
+            metrics_per_k[k_val]['#positives'].append(num_pos_topk)
+            metrics_per_k[k_val]['recall@k'].append(recall_k)
+            metrics_per_k[k_val]['precision@k'].append(precision_k)
+            metrics_per_k[k_val]['enrichment@k'].append(enrichment_k)
+        
     auroc_mean = np.mean(aurocs)
     auroc_std = np.std(aurocs)
     pr_auc_mean = np.mean(pr_aucs)
@@ -234,11 +225,33 @@ def evaluate_cv_performance(preds_template, labels_tsv, k, start_idx=0):
     print(f"AUROC:  {auroc_mean:.4f} ± {auroc_std:.4f}")
     print(f"PR AUC: {pr_auc_mean:.4f} ± {pr_auc_std:.4f}")
     
+    records = []
+    for k_val in KS:
+        records.append({
+            'k': k_val,
+            '#positives_mean': np.mean(metrics_per_k[k_val]['#positives']),
+            '#positives_std': np.std(metrics_per_k[k_val]['#positives']),
+            'recall@k_mean': np.mean(metrics_per_k[k_val]['recall@k']),
+            'recall@k_std': np.std(metrics_per_k[k_val]['recall@k']),
+            'precision@k_mean': np.mean(metrics_per_k[k_val]['precision@k']),
+            'precision@k_std': np.std(metrics_per_k[k_val]['precision@k']),
+            'enrichment@k_mean': np.mean(metrics_per_k[k_val]['enrichment@k']),
+            'enrichment@k_std': np.std(metrics_per_k[k_val]['enrichment@k'])
+        })
+        
+    results_df = pd.DataFrame(records)
+    
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        table_output_path = os.path.join(output_dir, f"{desc}_performance_top_k_comparison.tsv")
+        results_df.to_csv(table_output_path, sep='\t', index=False)
+    
     return {
         'auroc_mean': auroc_mean,
         'auroc_std': auroc_std,
         'pr_auc_mean': pr_auc_mean,
         'pr_auc_std': pr_auc_std,
         'aurocs': aurocs,
-        'pr_aucs': pr_aucs
+        'pr_aucs': pr_aucs,
+        'top_k_summary': results_df
     }
