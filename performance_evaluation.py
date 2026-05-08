@@ -221,9 +221,15 @@ def evaluate_cv_performance(preds_template, labels_tsv, k, start_idx=0, output_d
     pr_auc_mean = np.mean(pr_aucs)
     pr_auc_std = np.std(pr_aucs)
     
+    q = Decimal('0.0001')
+    auroc_mean_r  = Decimal(str(auroc_mean)).quantize(q, rounding=ROUND_HALF_UP)
+    auroc_std_r   = Decimal(str(auroc_std)).quantize(q, rounding=ROUND_HALF_UP)
+    pr_auc_mean_r = Decimal(str(pr_auc_mean)).quantize(q, rounding=ROUND_HALF_UP)
+    pr_auc_std_r  = Decimal(str(pr_auc_std)).quantize(q, rounding=ROUND_HALF_UP)
+
     print(f"--- Cross-Validation / Multi-Seed Performance (k={k}) ---")
-    print(f"AUROC:  {auroc_mean:.4f} ± {auroc_std:.4f}")
-    print(f"PR AUC: {pr_auc_mean:.4f} ± {pr_auc_std:.4f}")
+    print(f"AUROC:  {auroc_mean_r} ± {auroc_std_r}")
+    print(f"PR AUC: {pr_auc_mean_r} ± {pr_auc_std_r}")
     
     records = []
     for k_val in KS:
